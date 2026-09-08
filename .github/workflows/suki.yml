@@ -10,11 +10,9 @@ permissions:
   contents: write
 
 env:
-  KERNEL_DEFCONFIG: gki_defconfig
-  KERNEL_REPOSITORY: https://android.googlesource.com/kernel/common
-  KERNEL_BRANCH: android14-6.1
-  VIRTUAL_DEVICE_REPOSITORY: https://android.googlesource.com/kernel/common-modules/virtual-device
-  VIRTUAL_DEVICE_BRANCH: android14-6.1
+  AVD_BUILD_ID: '9964412'
+  AVD_MANIFEST_ARCH: kernel_virt_x86_64
+  KERNEL_MANIFEST_BRANCH: common-android14-6.1
 
 jobs:
   build:
@@ -29,6 +27,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y \
+            repo curl \
             git bc bison flex \
             build-essential \
             libssl-dev \
@@ -38,33 +37,50 @@ jobs:
 
       - name: Integrate SukiSU Ultra
         run: |
-          git clone --depth=1 --branch "$KERNEL_BRANCH" \
-            "$KERNEL_REPOSITORY" kernel-source
-          mkdir -p kernel-source/common-modules
-          git clone --depth=1 --branch "$VIRTUAL_DEVICE_BRANCH" \
-            "$VIRTUAL_DEVICE_REPOSITORY" kernel-source/common-modules/virtual-device
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          mkdir kernel-source
           cd kernel-source
-          bash ../sukisu/kernel/setup.sh main
+          repo init \
+            -u https://android.googlesource.com/kernel/manifest \
+            -b "$KERNEL_MANIFEST_BRANCH" \
+            --depth=1
+          curl -fL \
+            "https://ci.android.com/builds/submitted/${AVD_BUILD_ID}/${AVD_MANIFEST_ARCH}/latest/raw/manifest_${AVD_BUILD_ID}.xml" \
+            -o ".repo/manifests/manifest_${AVD_BUILD_ID}.xml"
+          repo init -m "manifest_${AVD_BUILD_ID}.xml"
+          repo sync -c -j"$(nproc)"
 
-      - name: Configure Kernel
-        run: |
-          cd kernel-source
-          make "$KERNEL_DEFCONFIG"
-          scripts/kconfig/merge_config.sh -m -r .config \
-            common-modules/virtual-device/virtual_device_core.fragment \
-            common-modules/virtual-device/virtual_device.fragment
-          make olddefconfig
+          bash ../sukisu/kernel/setup.sh main
+          rm -rf common/drivers/kernelsu
+          cp -a KernelSU/kernel common/drivers/kernelsu
+          if [ -d KernelSU/uapi ] && [ -L common/drivers/kernelsu/include/uapi ]; then
+            rm -f common/drivers/kernelsu/include/uapi
+            cp -a KernelSU/uapi common/drivers/kernelsu/include/uapi
+          fi
 
       - name: Build Kernel
         run: |
           cd kernel-source
-          make -j$(nproc)
+          help_output=$(tools/bazel run --config=fast --lto=none \
+            //common:kernel_x86_64_dist -- -h 2>&1 || true)
+          if grep -q -- '--destdir' <<< "$help_output"; then
+            DIST_ARG=--destdir
+          elif grep -q -- '--dist_dir' <<< "$help_output"; then
+            DIST_ARG=--dist_dir
+          else
+            echo "$help_output"
+            echo "Unable to determine the Bazel dist output argument."
+            exit 1
+          fi
+          tools/bazel run --config=fast --lto=none \
+            //common:kernel_x86_64_dist -- "${DIST_ARG}=dist"
 
       - name: Prepare Release Files
         run: |
           cd kernel-source
-          mkdir release
-          cp arch/x86/boot/bzImage release/
+          mkdir -p release
+          cp "$(find dist -type f -name bzImage -print -quit)" release/bzImage
           sha256sum release/bzImage > release/bzImage.sha256
 
       - name: Upload Artifact
