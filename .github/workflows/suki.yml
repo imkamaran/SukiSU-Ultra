@@ -10,7 +10,9 @@ permissions:
   contents: write
 
 env:
-  KERNEL_DEFCONFIG: x86_64_ranchu_defconfig
+  KERNEL_DEFCONFIG: x86_64_defconfig
+  KERNEL_REPOSITORY: https://android.googlesource.com/kernel/common
+  KERNEL_BRANCH: android14-6.1
 
 jobs:
   build:
@@ -18,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: sukisu
 
       - name: Install Dependencies
         run: |
@@ -32,20 +36,24 @@ jobs:
 
       - name: Integrate SukiSU Ultra
         run: |
-          curl -LSs \
-          https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh \
-          | bash -s main
+          git clone --depth=1 --branch "$KERNEL_BRANCH" \
+            "$KERNEL_REPOSITORY" kernel-source
+          cd kernel-source
+          bash ../sukisu/kernel/setup.sh main
 
       - name: Configure Kernel
         run: |
+          cd kernel-source
           make $KERNEL_DEFCONFIG
 
       - name: Build Kernel
         run: |
+          cd kernel-source
           make -j$(nproc)
 
       - name: Prepare Release Files
         run: |
+          cd kernel-source
           mkdir release
           cp arch/x86/boot/bzImage release/
           sha256sum release/bzImage > release/bzImage.sha256
@@ -54,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-release
-          path: release/*
+          path: kernel-source/release/*
 
   release:
     needs: build
@@ -70,7 +78,7 @@ jobs:
       - name: Generate Version
         id: version
         run: |
-          echo "TAG=a14-api34-6.1-sukisu-$(date +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
+          echo "TAG=a14-api34-6.1-sukisu-$(date +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         env:
