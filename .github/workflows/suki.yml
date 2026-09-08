@@ -10,9 +10,11 @@ permissions:
   contents: write
 
 env:
-  KERNEL_DEFCONFIG: x86_64_defconfig
+  KERNEL_DEFCONFIG: gki_defconfig
   KERNEL_REPOSITORY: https://android.googlesource.com/kernel/common
   KERNEL_BRANCH: android14-6.1
+  VIRTUAL_DEVICE_REPOSITORY: https://android.googlesource.com/kernel/common-modules/virtual-device
+  VIRTUAL_DEVICE_BRANCH: android14-6.1
 
 jobs:
   build:
@@ -38,13 +40,20 @@ jobs:
         run: |
           git clone --depth=1 --branch "$KERNEL_BRANCH" \
             "$KERNEL_REPOSITORY" kernel-source
+          mkdir -p kernel-source/common-modules
+          git clone --depth=1 --branch "$VIRTUAL_DEVICE_BRANCH" \
+            "$VIRTUAL_DEVICE_REPOSITORY" kernel-source/common-modules/virtual-device
           cd kernel-source
           bash ../sukisu/kernel/setup.sh main
 
       - name: Configure Kernel
         run: |
           cd kernel-source
-          make $KERNEL_DEFCONFIG
+          make "$KERNEL_DEFCONFIG"
+          scripts/kconfig/merge_config.sh -m -r .config \
+            common-modules/virtual-device/virtual_device_core.fragment \
+            common-modules/virtual-device/virtual_device.fragment
+          make olddefconfig
 
       - name: Build Kernel
         run: |
