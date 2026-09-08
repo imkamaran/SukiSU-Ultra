@@ -1,0 +1,83 @@
+name: Android14 API34 x86_64 SukiSU Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_DEFCONFIG: x86_64_ranchu_defconfig
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git bc bison flex \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            dwarves pahole \
+            rsync cpio
+
+      - name: Integrate SukiSU Ultra
+        run: |
+          curl -LSs \
+          https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh \
+          | bash -s main
+
+      - name: Configure Kernel
+        run: |
+          make $KERNEL_DEFCONFIG
+
+      - name: Build Kernel
+        run: |
+          make -j$(nproc)
+
+      - name: Prepare Release Files
+        run: |
+          mkdir release
+          cp arch/x86/boot/bzImage release/
+          sha256sum release/bzImage > release/bzImage.sha256
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-release
+          path: release/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-release
+          path: release
+
+      - name: Generate Version
+        id: version
+        run: |
+          echo "TAG=a14-api34-6.1-sukisu-$(date +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create \
+            "${{ steps.version.outputs.TAG }}" \
+            release/* \
+            --title "${{ steps.version.outputs.TAG }}" \
+            --generate-notes
