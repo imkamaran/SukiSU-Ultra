@@ -59,6 +59,36 @@ jobs:
             cp -a KernelSU/uapi common/drivers/kernelsu/include/uapi
           fi
 
+          # Android 14's 6.1 GKI uses the syscall-table path and does not
+          # provide X86_FEATURE_INDIRECT_SAFE.
+          INIT_FILE=common/drivers/kernelsu/core/init.c
+          python3 - "$INIT_FILE" <<'PY'
+          import re
+          import sys
+
+          path = sys.argv[1]
+          source = open(path, encoding="utf-8").read()
+          source = re.sub(
+              r"\n#ifndef X86_FEATURE_INDIRECT_SAFE.*?#endif\n",
+              "\n",
+              source,
+              count=1,
+              flags=re.DOTALL,
+          )
+          source = re.sub(
+              r"\n#if defined\(__x86_64__\) && !defined\(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER\)\n[ \t]*// If the kernel has the hardening patch,.*?\n#endif\n",
+              "\n",
+              source,
+              count=1,
+              flags=re.DOTALL,
+          )
+          open(path, "w", encoding="utf-8").write(source)
+          PY
+          if grep -q 'X86_FEATURE_INDIRECT_SAFE' "$INIT_FILE"; then
+            echo "Unsupported x86 syscall hardening check remains in SukiSU."
+            exit 1
+          fi
+
       - name: Build Kernel
         run: |
           cd kernel-source
